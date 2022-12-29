@@ -35,31 +35,38 @@ class S3Filesystem(paramiko.SFTPDirectory):
         return sftp_file
 
     def list_folder(self, path):
-    """List the contents of the specified folder.
-
-    This method translates the SFTP `list_folder` command to an S3
-    `list_objects` command, and returns the contents of the specified
-    folder as a list of SFTPFileInfo objects.
-
-    Args:
-        path (str): The path of the folder to list.
-
-    Returns:
-        A list of SFTPFileInfo objects representing the contents of the
-        folder.
-    """
     try:
-        # List the objects in the specified S3 bucket and prefix
-        response = self.s3_client.list_objects(
-            Bucket=self.bucket, Prefix=path)
-        # Convert the S3 objects to SFTPFileInfo objects
-        files = [self._s3_obj_to_sftp_file(obj) for obj in response['Contents']]
+        response = self.s3_client.list_objects(Bucket=self.bucket, Prefix=path)
+        files = []
+        for obj in response['Contents']:
+            file_info = paramiko.SFTPFileInfo()
+            file_info.filename = obj['Key']
+            file_info.st_size = obj['Size']
+            file_info.st_mtime = int(obj['LastModified'].timestamp())
+            file_info.st_mode = paramiko.S_IFREG if obj['ContentType'] != 'application/x-directory' else paramiko.S_IFDIR
+            files.append(file_info)
         return files
     except Exception as e:
-        # Log the error and return an empty list
-        if self.error_log_enabled:
-            with open(self.error_log_file, 'a') as f:
-                f.write(f'Error listing folder "{path}": {e}\n')
-        return []
+        raise paramiko.SFTPError(paramiko.SFTP_FAILURE, f'Error listing folder: {e}')
+        
+    def lstat(s3_client, bucket, path):
+    try:
+        obj = s3_client.head_object(Bucket=bucket, Key=path)
+        attributes = paramiko.SFTPAttributes()
+        attributes.filename = obj['Key']
+        attributes.st_size = obj['ContentLength']
+        attributes.st_mtime = int(obj['LastModified'].timestamp())
+        attributes.st_mode = paramiko.S_IFREG if obj['ContentType'] != 'application/x-directory' else paramiko.S_IFDIR
+        return attributes
+    except Exception as e:
+        raise paramiko.SFTPError(paramiko.SFTP_FAILURE, f'Error getting file info: {e}')
+        
+        
+    def remove(self, path):
+    try:
+        self.s3_client.delete_object(Bucket=self.bucket, Key=path)
+    except Exception as e:
+        raise paramiko.SFTPError(paramiko.SFTP_FAILURE, f'Error deleting file: {e}')
+
 
        
